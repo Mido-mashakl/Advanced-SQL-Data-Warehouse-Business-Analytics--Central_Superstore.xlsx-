@@ -833,7 +833,7 @@ EXEC gold.usp_top_n_products_by_profit @top_n = 5, @category = 'Technology';
 -- ============================================================
 -- 18 numbered, standalone queries.
 
--- Q1: JOIN -- order lines with customer + product names attached.
+-- Q1: order lines with The most and The Least profit with customer + product names attached.
 SELECT TOP 20
     fs.order_id,
     dc.customer_name,
@@ -843,9 +843,20 @@ SELECT TOP 20
 FROM gold.fact_sales fs
 INNER JOIN gold.dim_customer dc ON dc.customer_key = fs.customer_key
 INNER JOIN gold.dim_product  dp ON dp.product_key  = fs.product_key
-ORDER BY fs.order_id;
+ORDER BY fs.profit desc;
+-- ======================================
+SELECT TOP 20
+    fs.order_id,
+    dc.customer_name,
+    dp.product_name,
+    fs.sales,
+    fs.profit
+FROM gold.fact_sales fs
+INNER JOIN gold.dim_customer dc ON dc.customer_key = fs.customer_key
+INNER JOIN gold.dim_product  dp ON dp.product_key  = fs.product_key
+ORDER BY fs.profit;
 
--- Q2: JOIN (4-way) -- fully denormalized order-line report, one row
+-- Q2: fully denormalized order-line report, one row
 -- per line with every dimension's descriptive attributes attached.
 SELECT
     fs.order_id,
@@ -869,7 +880,7 @@ INNER JOIN gold.dim_location  dl  ON dl.location_key  = fs.location_key
 INNER JOIN gold.dim_ship_mode dsm ON dsm.ship_mode_key = fs.ship_mode_key
 INNER JOIN gold.dim_date      dd  ON dd.date_key       = fs.order_date_key;
 
--- Q3: Subquery in WHERE -- products whose total profit beats the
+-- Q3: products whose total profit beats the
 -- average total profit across all products.
 SELECT product_id, product_name, category, total_profit
 FROM gold.vw_product_performance
@@ -878,9 +889,8 @@ WHERE total_profit > (
 )
 ORDER BY total_profit DESC;
 
--- Q4: Subquery in FROM (derived table) -- customers whose lifetime
--- sales exceed $2,000, joined back to the dimension for their
--- segment.
+-- Q4: customers whose lifetime
+-- sales exceed $2,000, joined back to the dimension for their segment.
 SELECT dc.customer_name, dc.segment, big_spenders.lifetime_sales
 FROM (
     SELECT customer_key, SUM(sales) AS lifetime_sales
@@ -891,7 +901,7 @@ FROM (
 INNER JOIN gold.dim_customer dc ON dc.customer_key = big_spenders.customer_key
 ORDER BY big_spenders.lifetime_sales DESC;
 
--- Q5: Correlated subquery -- order lines whose profit is below the
+-- Q5: order lines whose profit is below the
 -- average profit for their own product's sub-category (flags
 -- specific underperforming line items, not whole products).
 SELECT
@@ -909,7 +919,14 @@ WHERE fs.profit < (
 )
 ORDER BY dp.sub_category, fs.profit;
 
--- Q6: CTE + JOIN -- monthly sales trend with month-over-month
+-- فبتالي عايزين نشوف بقى متوسط بيع كل 
+-- sub_category
+Select dp.sub_category , Avg(fs.profit) as Avg
+from gold.dim_product dp 
+inner JOIN gold.fact_sales fs on dp.product_key = fs.product_key 
+Group By dp.sub_category;
+
+-- Q6: monthly sales trend with month-over-month
 -- growth, computed via a window function inside a second CTE.
 ;WITH monthly AS (
     SELECT
@@ -931,8 +948,9 @@ SELECT
     CAST((total_sales - prior_month_sales) * 100.0 / NULLIF(prior_month_sales, 0) AS DECIMAL(6,2)) AS mom_growth_pct
 FROM monthly_with_growth
 ORDER BY year_number, month_number;
+--  استنتاج : ان شهر مارس دايما معدل المبيعات بيزيد فيه بشكل ضخم على عكس شهر أكتوبر
 
--- Q7: CTE -- simple RFM-style summary per customer (Recency in days
+-- Q7: simple RFM-style summary per customer (Recency in days
 -- since their last order relative to the dataset's last order date,
 -- Frequency = order count, Monetary = total sales).
 ;WITH dataset_last_date AS (
@@ -958,20 +976,10 @@ SELECT
 FROM customer_summary cs
 CROSS JOIN dataset_last_date dld
 ORDER BY cs.monetary DESC;
+-- البايثون ميلزمنيش بعد هذا ال 
+-- RFM 
 
--- Q8: CASE -- bucket every order line into a discount tier.
-SELECT
-    fs.order_id,
-    fs.discount,
-    CASE
-        WHEN fs.discount = 0            THEN 'No Discount'
-        WHEN fs.discount <= 0.20        THEN 'Low (<=20%)'
-        WHEN fs.discount <= 0.50        THEN 'Medium (21-50%)'
-        ELSE 'High (>50%)'
-    END AS discount_tier
-FROM gold.fact_sales fs;
-
--- Q9: CASE (business logic) -- profit-health label per order line,
+-- Q8: profit-health label per order line,
 -- feeding straight into the loss-driver analysis in section 9.
 SELECT
     fs.order_id,
@@ -986,7 +994,7 @@ SELECT
 FROM gold.fact_sales fs
 INNER JOIN gold.dim_product dp ON dp.product_key = fs.product_key;
 
--- Q10: CTE + JOIN + CASE + window function -- top 3 customers by
+-- Q9: top 3 customers by
 -- total profit *within each segment*, with a CASE-based tier label.
 ;WITH customer_totals AS (
     SELECT
@@ -1009,7 +1017,7 @@ FROM ranked
 WHERE rank_in_segment <= 3
 ORDER BY segment, rank_in_segment;
 
--- Q11: CTE + window function -- running (cumulative) sales total
+-- Q10: Cumulative sales total
 -- over the full order-date timeline.
 ;WITH daily_sales AS (
     SELECT d.full_date, SUM(fs.sales) AS daily_total
@@ -1024,7 +1032,7 @@ SELECT
 FROM daily_sales
 ORDER BY full_date;
 
--- Q12: CTE + window function -- rank products by profit within their
+-- Q11: rank products by profit within their
 -- own category (DENSE_RANK, so ties share a rank).
 ;WITH product_totals AS (
     SELECT dp.category, dp.product_name, SUM(fs.profit) AS total_profit
@@ -1038,7 +1046,7 @@ SELECT
 FROM product_totals
 ORDER BY category, profit_rank_in_category;
 
--- Q13: JOIN + CASE -- shipping performance: does ship_mode match the
+-- Q12: shipping performance: does ship_mode match the
 -- actual shipping duration achieved.
 SELECT
     dsm.ship_mode,
@@ -1052,7 +1060,7 @@ FROM gold.fact_sales fs
 INNER JOIN gold.dim_ship_mode dsm ON dsm.ship_mode_key = fs.ship_mode_key
 GROUP BY dsm.ship_mode;
 
--- Q14: JOIN + CTE -- state-level sales and profit ranking.
+-- Q13: state-level sales and profit ranking.
 ;WITH state_totals AS (
     SELECT dl.state, SUM(fs.sales) AS total_sales, SUM(fs.profit) AS total_profit
     FROM gold.fact_sales fs
@@ -1064,7 +1072,7 @@ SELECT state, total_sales, total_profit,
 FROM state_totals
 ORDER BY total_profit DESC;
 
--- Q15: JOIN -- sub-category sales & profit, sorted worst-margin first
+-- Q14: JOIN -- sub-category sales & profit, sorted worst-margin first
 -- (a direct feed into the "where are we losing money" analysis).
 SELECT
     dp.category,
@@ -1077,8 +1085,7 @@ INNER JOIN gold.dim_product dp ON dp.product_key = fs.product_key
 GROUP BY dp.category, dp.sub_category
 ORDER BY profit_margin_pct ASC;
 
--- Q16: Window function replacing what would otherwise be a
--- row-by-row correlated subquery -- each line's profit compared to
+-- Q15: each line's profit compared to
 -- its OWN customer's average profit, computed in a single pass.
 SELECT
     fs.order_id,
@@ -1092,19 +1099,8 @@ SELECT
 FROM gold.fact_sales fs
 INNER JOIN gold.dim_customer dc ON dc.customer_key = fs.customer_key;
 
--- Q17: EXISTS subquery -- customers who have placed at least one
--- order in the Technology category (semi-join pattern).
-SELECT dc.customer_id, dc.customer_name
-FROM gold.dim_customer dc
-WHERE EXISTS (
-    SELECT 1
-    FROM gold.fact_sales fs
-    INNER JOIN gold.dim_product dp ON dp.product_key = fs.product_key
-    WHERE fs.customer_key = dc.customer_key
-      AND dp.category = 'Technology'
-);
 
--- Q18: CASE + aggregation -- weekday vs. weekend order volume and
+-- Q16 weekday vs. weekend order volume and
 -- average order value.
 SELECT
     CASE WHEN d.is_weekend = 1 THEN 'Weekend' ELSE 'Weekday' END AS day_type,
@@ -1128,8 +1124,8 @@ GO
 -- ------------------------------------------------------------
 -- 9A. Profitability
 -- ------------------------------------------------------------
-SELECT * FROM gold.vw_product_performance ORDER BY total_profit ASC;   -- worst-margin products first
-SELECT * FROM gold.vw_product_performance WHERE performance_label = 'Loss Maker' ORDER BY total_profit ASC;
+SELECT * FROM gold.vw_product_performance ORDER BY total_profit;   -- worst-margin products first
+SELECT * FROM gold.vw_product_performance WHERE performance_label = 'Loss Maker' ORDER BY total_profit;
 
 -- INSIGHT (profitability): Tables sits at a structural loss in this
 -- dataset -- discounting on Tables is deep enough (see Q8's discount
@@ -1152,7 +1148,7 @@ FROM gold.vw_customer_profitability
 GROUP BY profitability_tier;
 
 -- INSIGHT (customer behavior): the Consumer segment has the largest
--- customer count but not the highest average profit per customer --
+-- customer count but not the highest average profit per customer 
 -- Corporate and Home Office customers place fewer, larger orders at
 -- a better margin. A handful of customers fall into the "At Risk
 -- (Net Loss)" tier from vw_customer_profitability entirely because
@@ -1180,24 +1176,7 @@ ORDER BY d.month_number;
 -- seasonal dip is cyclical, not a sign of shrinking demand.
 
 -- ============================================================
--- 10. DOCUMENTATION (Rubric Category 6)
--- ============================================================
--- Layer summary:
---   staging  -> 1 table,  raw text, reloaded by staging.load_superstore
---   bronze   -> 1 table,  append-only, versioned by bronze_id
---   silver   -> 4 tables, typed + cleaned + flagged, business keys
---   gold     -> 6 tables, star schema (1 fact + 5 dimensions)
--- Views:      gold.vw_monthly_sales_kpi, gold.vw_customer_profitability,
---             gold.vw_product_performance
--- Procedures: gold.usp_get_sales_kpis_by_period, gold.usp_top_n_products_by_profit
--- Indexes:    5 nonclustered indexes on gold.fact_sales (4 FK + 1 extra
---             covering), 1 covering index on silver.order_lines' business key
--- Every DDL/ETL block above is commented inline at the point of the
--- code rather than only here, so this section is a map of the file,
--- not a duplicate of those comments.
-
--- ============================================================
--- 11. PIPELINE ORCHESTRATION & LOGGING
+-- 10. PIPELINE ORCHESTRATION & LOGGING
 -- ============================================================
 -- Everything above this point is correct ETL logic, but it is not
 -- yet a pipeline: staging/bronze/silver/gold are separate statement
@@ -1224,7 +1203,7 @@ IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'etl')
 GO
 
 -- ------------------------------------------------------------
--- 11A. etl.load_log — one row per layer, per run
+-- 10A. etl.load_log — one row per layer, per run
 -- ------------------------------------------------------------
 IF NOT EXISTS (SELECT 1 FROM sys.tables t JOIN sys.schemas s ON t.schema_id = s.schema_id WHERE s.name = 'etl' AND t.name = 'load_log')
 BEGIN
@@ -1242,7 +1221,7 @@ END;
 GO
 
 -- ------------------------------------------------------------
--- 11B. Per-layer load procedures
+-- 10B. Per-layer load procedures
 -- Bronze/silver/gold logic is unchanged from sections 3-4 above --
 -- moved here verbatim, just wrapped so the orchestrator can call
 -- each layer as a single unit and know how many rows it touched.
@@ -1398,7 +1377,7 @@ END;
 GO
 
 -- ------------------------------------------------------------
--- 11C. etl.usp_run_full_pipeline — the entry point
+-- 10C. etl.usp_run_full_pipeline — the entry point
 -- Calls staging -> bronze -> silver -> gold in dependency order.
 -- One run_id ties all four log rows together. If any layer throws,
 -- that layer's row is marked FAILED with the error message, the
@@ -1476,7 +1455,7 @@ END;
 GO
 
 -- Run the whole pipeline in one call:
--- EXEC etl.usp_run_full_pipeline;
+EXEC etl.usp_run_full_pipeline;
 
 -- Check the history of every run so far:
--- SELECT * FROM etl.load_log ORDER BY log_id DESC;
+SELECT * FROM etl.load_log ORDER BY log_id DESC;
